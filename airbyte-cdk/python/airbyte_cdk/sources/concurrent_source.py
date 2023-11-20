@@ -4,10 +4,13 @@
 
 import asyncio
 from queue import Queue
-from typing import Any, Dict, Iterator, Tuple
+from threading import Thread
+from typing import Any, Dict, Iterator, Tuple, TypeVar
 
 PartitionType = Tuple[int, int]
 RecordType = Dict[str, Any]
+T = TypeVar("T")
+
 n_streams = 3
 
 
@@ -16,9 +19,10 @@ async def generate_partition(partition: int) -> PartitionType:
     return partition * partition_size, (partition + 1) * partition_size
 
 
-async def read_partition(partition: PartitionType, queue: Queue) -> None:
+async def read_partition(stream_name: str, partition: PartitionType, queue: Queue) -> None:
     for i in range(*partition):
-        queue.put({"record": i})
+        queue.put({f"{stream_name}_record": i})
+        await asyncio.sleep(0.001)  # simulate I/O wait time; demonstrates that streams do get interleaved
 
 
 async def read_stream(stream_name: str, queue: Queue) -> None:
@@ -31,7 +35,7 @@ async def read_stream(stream_name: str, queue: Queue) -> None:
         for task in done:
             result = task.result()
             if isinstance(result, tuple):
-                pending.add(asyncio.create_task(read_partition(result, queue)))
+                pending.add(asyncio.create_task(read_partition(stream_name, result, queue)))
             elif result is None:
                 pass
             else:
@@ -46,20 +50,26 @@ async def read_all_streams(queue):
     await asyncio.gather(*tasks)
 
 
-def read_source() -> Iterator[RecordType]:
-    queue = Queue()
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(read_all_streams(queue))
-    sentinel_count = 0
+class SourceReader(Iterator[T]):
+    def __init__(self):
+        self.queue = Queue()
+        self.sentinel_count = 0
+        Thread(target=lambda: asyncio.run(read_all_streams(self.queue))).start()
 
-    while True:
-        item = queue.get()
+    def __next__(self) -> T:
+        item = self.queue.get()
         if "__done_" in item:
-            sentinel_count += 1
-            if sentinel_count == n_streams:
-                return
+            self.sentinel_count += 1
+            if self.sentinel_count == n_streams:
+                raise StopIteration
+            else:
+                return self.__next__()
         else:
-            yield item
+            return item
+
+
+def read_source() -> Iterator[RecordType]:
+    return SourceReader()
 
 
 def entrypoint_read():
