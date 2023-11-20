@@ -3,10 +3,12 @@
 #
 
 import asyncio
+from queue import Queue
 from typing import Any, Dict, List, Tuple
 
 PartitionType = Tuple[int, int]
 RecordType = Dict[str, Any]
+n_streams = 3
 
 
 async def generate_partition(partition: int) -> PartitionType:
@@ -18,10 +20,9 @@ async def read_partition(partition: PartitionType) -> List[RecordType]:
     return [{"record": i} for i in range(*partition)]
 
 
-async def read_stream() -> List[RecordType]:
+async def read_stream(stream_name: str, queue: Queue) -> None:
     n_partitions = 3
     pending = {asyncio.create_task(generate_partition(p)) for p in range(n_partitions)}
-    results = []
 
     while True:
         done, pending = await asyncio.wait(pending)
@@ -31,25 +32,39 @@ async def read_stream() -> List[RecordType]:
             if isinstance(result, tuple):
                 pending.add(asyncio.create_task(read_partition(result)))
             elif isinstance(result, list):
-                results.extend(result)
+                queue.put(f"{stream_name}, {result}")
             else:
                 raise Exception(f"unrecognized {result}")
         if not pending:
-            return results
+            queue.put(f"__done_{stream_name}")
+            break
 
 
-async def read_source() -> List[RecordType]:
-    records = []
-    for stream in range(1):
-        records.extend(await read_stream())
-    return records
+async def read_all_streams(queue):
+    for stream in range(n_streams):
+        await read_stream(f"stream_{stream}", queue)
 
 
-async def entrypoint_read():
-    for record in await read_source():
+def read_source() -> List[RecordType]:
+    queue = Queue()
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(read_all_streams(queue))
+    sentinel_count = 0
+
+    while True:
+        item = queue.get()
+        if "__done_" in item:
+            sentinel_count += 1
+            if sentinel_count == n_streams:
+                return
+        else:
+            yield item
+
+
+def entrypoint_read():
+    for record in read_source():
         print(record)
 
 
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(entrypoint_read())
+    entrypoint_read()
