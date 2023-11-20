@@ -4,7 +4,7 @@
 
 import asyncio
 from queue import Queue
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, Iterator, Tuple
 
 PartitionType = Tuple[int, int]
 RecordType = Dict[str, Any]
@@ -16,8 +16,9 @@ async def generate_partition(partition: int) -> PartitionType:
     return partition * partition_size, (partition + 1) * partition_size
 
 
-async def read_partition(partition: PartitionType) -> List[RecordType]:
-    return [{"record": i} for i in range(*partition)]
+async def read_partition(partition: PartitionType, queue: Queue) -> None:
+    for i in range(*partition):
+        queue.put({"record": i})
 
 
 async def read_stream(stream_name: str, queue: Queue) -> None:
@@ -30,9 +31,9 @@ async def read_stream(stream_name: str, queue: Queue) -> None:
         for task in done:
             result = task.result()
             if isinstance(result, tuple):
-                pending.add(asyncio.create_task(read_partition(result)))
-            elif isinstance(result, list):
-                queue.put(f"{stream_name}, {result}")
+                pending.add(asyncio.create_task(read_partition(result, queue)))
+            elif result is None:
+                pass
             else:
                 raise Exception(f"unrecognized {result}")
         if not pending:
@@ -41,11 +42,11 @@ async def read_stream(stream_name: str, queue: Queue) -> None:
 
 
 async def read_all_streams(queue):
-    for stream in range(n_streams):
-        await read_stream(f"stream_{stream}", queue)
+    tasks = [asyncio.create_task(read_stream(f"stream_{stream}", queue)) for stream in range(n_streams)]
+    await asyncio.gather(*tasks)
 
 
-def read_source() -> List[RecordType]:
+def read_source() -> Iterator[RecordType]:
     queue = Queue()
     loop = asyncio.get_event_loop()
     loop.run_until_complete(read_all_streams(queue))
