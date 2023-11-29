@@ -1,0 +1,30 @@
+ARG  BASE_IMAGE='mcr.microsoft.com/mssql/server:2022-latest'
+FROM ${BASE_IMAGE} AS base
+USER root
+RUN echo basew > base.txt
+
+FROM base AS ssl_enabled
+RUN mkdir /certs &&
+	openssl req -nodes -new -x509 -sha256 -keyout /certs/ca.key -out /certs/ca.crt -subj "/CN=ca" && 
+	openssl req -nodes -new -x509 -sha256 -keyout /certs/dummy_ca.key -out /certs/dummy_ca.crt -subj "/CN=ca" && 
+	openssl req -nodes -new -sha256 -keyout /certs/intermediate_ca.key -out /certs/intermediate_ca.csr -subj "/CN=intermediate_ca" && 
+	openssl req -nodes -new -sha256 -keyout /certs/dummy_intermediate_ca.key -out /certs/dummy_intermediate_ca.csr -subj "/CN=dummy_intermediate_ca" && 
+	openssl req -nodes -new -sha256 -keyout /certs/server.key -out /certs/server.csr -subj "/CN=localhost" && 
+	openssl req -nodes -new -sha256 -keyout /certs/dummy_server.key -out /certs/dummy_server.csr -subj "/CN=localhost" && 
+
+	openssl x509 -req -in /certs/intermediate_ca.csr -CA /certs/ca.crt -CAkey /certs/ca.key -out /certs/intermediate_ca.crt -days 365 -sha256 && 
+	openssl x509 -req -in /certs/dummy_intermediate_ca.csr -CA /certs/ca.crt -CAkey /certs/ca.key -out /certs/dummy_intermediate_ca.crt -days 365 -sha256 && 
+	openssl x509 -req -in /certs/server.csr -CA /certs/intermediate_ca.crt -CAkey /certs/intermediate_ca.key -out /certs/server.crt -days 365 -sha256 && 
+	openssl x509 -req -in /certs/dummy_server.csr -CA /certs/ca.crt -CAkey /certs/ca.key -out /certs/dummy_server.crt -days 365 -sha256 && 
+	openssl x509 -req -in /certs/server.csr -CA /certs/dummy_ca.crt -CAkey /certs/dummy_ca.key -out /certs/server_dummy_ca.crt -days 365 -sha256 && 
+	openssl x509 -req -in /certs/server.csr -CA /certs/dummy_intermediate_ca.crt  -CAkey /certs/dummy_intermediate_ca.key -out /certs/server_dummy_intermediate_ca.crt -days 365 -sha256 && 
+	chmod 440 /certs/* && 
+	{
+	cat > /var/opt/mssql/mssql.conf <<- EOF
+	[network]
+		tlscert = /certs/server.crt
+		tlskey = /certs/server.key
+		tlsprotocols = 1.2
+		forceencryption = 1
+	EOF
+	}
