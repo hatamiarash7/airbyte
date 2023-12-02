@@ -594,7 +594,7 @@ public class MssqlSource extends AbstractJdbcSource<JDBCType> implements Source 
 
         // trust store location code found at https://stackoverflow.com/a/56570588
         if (config.has("certificate")) {
-          byte[] certificate = config.get("certificate").asText().getBytes();
+          byte[] certificate = config.get("certificate").asText().getBytes(StandardCharsets.US_ASCII);
           String password = RandomStringUtils.randomAlphanumeric(100);
           char[] pwdArray = password.toCharArray();
           final File trustStoreFile;

@@ -105,7 +105,7 @@
               "certificate": {
                 "title": "Certificate",
                 "type": "string",
-                "description": "certificate of the server, or any trusted authority in the chain of trust of the server certificate",
+                "description": "certificate of the server, or of the CA that signed the server certificate",
                 "order": 1,
                 "airbyte_secret": true,
                 "multiline": true
