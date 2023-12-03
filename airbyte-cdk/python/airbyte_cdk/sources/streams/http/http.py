@@ -2,7 +2,7 @@
 # Copyright (c) 2023 Airbyte, Inc., all rights reserved.
 #
 
-
+import asyncio
 import logging
 import os
 import urllib
@@ -355,7 +355,11 @@ class HttpStream(Stream, ABC):
         self.logger.debug(
             "Making outbound API request", extra={"headers": request.headers, "url": request.url, "request_body": request.body}
         )
-        response: requests.Response = self._session.send(request, **request_kwargs)
+
+        import ipdb; ipdb.set_trace()
+        loop = asyncio.get_event_loop()
+        future = loop.run_in_executor(loop, lambda: self._session.send(request, **request_kwargs))
+        response = future.result
 
         # Evaluation of response.text can be heavy, for example, if streaming a large response
         # Do it only in debug mode
