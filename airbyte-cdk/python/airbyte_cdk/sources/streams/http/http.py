@@ -146,7 +146,7 @@ class HttpStream(Stream, ABC):
         return HttpAvailabilityStrategy()
 
     @abstractmethod
-    def next_page_token(self, response: requests.Response) -> Optional[Mapping[str, Any]]:
+    def next_page_token(self, response: aiohttp.ClientResponse) -> Optional[Mapping[str, Any]]:
         """
         Override this method to define a pagination strategy.
 
@@ -313,9 +313,9 @@ class HttpStream(Stream, ABC):
         json: Optional[Mapping[str, Any]] = None,
         data: Optional[Union[str, Mapping[str, Any]]] = None,
     ) -> aiohttp.ClientRequest:
-        return asyncio.run(self._create_aiohttp_client_requests(path, headers, params, json, data))
+        return self._create_aiohttp_client_request(path, headers, params, json, data)
 
-    async def _create_aiohttp_client_requests(
+    def _create_aiohttp_client_request(
         self,
         path: str,
         headers: Optional[Mapping[str, str]] = None,
@@ -399,7 +399,7 @@ class HttpStream(Stream, ABC):
         # TODO: get headers and anything else off of request & combine with request_kwargs?
         async with session.request(request.method, request.url, **request_kwargs) as resp:
             response = resp
-        await session.close()
+        await session.close()  # TODO: move this into context manager
         return response
 
     async def _setup_session(self) -> aiohttp.ClientSession:
@@ -520,7 +520,7 @@ class HttpStream(Stream, ABC):
     def _read_pages(
         self,
         records_generator_fn: Callable[
-            [requests.PreparedRequest, requests.Response, Mapping[str, Any], Optional[Mapping[str, Any]]], Iterable[StreamData]
+            [aiohttp.ClientRequest, aiohttp.ClientResponse, Mapping[str, Any], Optional[Mapping[str, Any]]], Iterable[StreamData]
         ],
         stream_slice: Optional[Mapping[str, Any]] = None,
         stream_state: Optional[Mapping[str, Any]] = None,
@@ -536,15 +536,12 @@ class HttpStream(Stream, ABC):
             if not next_page_token:
                 pagination_complete = True
 
-        # Always return an empty generator just in case no records were ever yielded
-        yield from []
-
     def _fetch_next_page(
         self,
         stream_slice: Optional[Mapping[str, Any]] = None,
         stream_state: Optional[Mapping[str, Any]] = None,
         next_page_token: Optional[Mapping[str, Any]] = None,
-    ) -> Tuple[requests.PreparedRequest, requests.Response]:
+    ) -> Tuple[aiohttp.ClientRequest, aiohttp.ClientResponse]:  # TODO: maybe don't need to return request too since its on aiohttp.ClientResponse
         request_headers = self.request_headers(stream_state=stream_state, stream_slice=stream_slice, next_page_token=next_page_token)
         request = self._create_prepared_request(
             path=self.path(stream_state=stream_state, stream_slice=stream_slice, next_page_token=next_page_token),

@@ -2,6 +2,7 @@
 # Copyright (c) 2023 Airbyte, Inc., all rights reserved.
 #
 
+import asyncio
 import csv
 import ctypes
 import math
@@ -13,6 +14,7 @@ from abc import ABC
 from contextlib import closing
 from typing import Any, Callable, Iterable, List, Mapping, MutableMapping, Optional, Tuple, Type, Union
 
+import aiohttp
 import pandas as pd
 import pendulum
 import requests  # type: ignore[import]
@@ -125,8 +127,9 @@ class RestSalesforceStream(SalesforceStream):
             return next_token
         return f"/services/data/{self.sf_api.version}/queryAll"
 
-    def next_page_token(self, response: requests.Response) -> Optional[Mapping[str, Any]]:
-        response_data = response.json()
+    async def next_page_token(self, response: aiohttp.ClientResponse) -> Optional[Mapping[str, Any]]:
+        import ipdb; ipdb.set_trace()
+        response_data = await response.json()
         next_token = response_data.get("nextRecordsUrl")
         return {"next_token": next_token} if next_token else None
 
@@ -211,14 +214,14 @@ class RestSalesforceStream(SalesforceStream):
                 break
 
             property_chunk = property_chunks[chunk_id]
-            request, response = self._fetch_next_page_for_chunk(
+            request, response = asyncio.run(self._fetch_next_page_for_chunk(
                 stream_slice, stream_state, property_chunk.next_page, property_chunk.properties
-            )
+            ))
 
             # When this is the first time we're getting a chunk's records, we set this to False to be used when deciding the next chunk
             if property_chunk.first_time:
                 property_chunk.first_time = False
-            property_chunk.next_page = self.next_page_token(response)
+            property_chunk.next_page = asyncio.run(self.next_page_token(response))
             chunk_page_records = records_generator_fn(request, response, stream_state, stream_slice)
             if not self.too_many_properties:
                 # this is the case when a stream has no primary key
@@ -260,13 +263,13 @@ class RestSalesforceStream(SalesforceStream):
         # Always return an empty generator just in case no records were ever yielded
         yield from []
 
-    def _fetch_next_page_for_chunk(
+    async def _fetch_next_page_for_chunk(
         self,
         stream_slice: Mapping[str, Any] = None,
         stream_state: Mapping[str, Any] = None,
         next_page_token: Mapping[str, Any] = None,
         property_chunk: Mapping[str, Any] = None,
-    ) -> Tuple[requests.PreparedRequest, requests.Response]:
+    ) -> Tuple[aiohttp.ClientRequest, aiohttp.ClientResponse]:
         request_headers = self.request_headers(stream_state=stream_state, stream_slice=stream_slice, next_page_token=next_page_token)
         request = self._create_prepared_request(
             path=self.path(stream_state=stream_state, stream_slice=stream_slice, next_page_token=next_page_token),
@@ -278,7 +281,7 @@ class RestSalesforceStream(SalesforceStream):
             data=self.request_body_data(stream_state=stream_state, stream_slice=stream_slice, next_page_token=next_page_token),
         )
         request_kwargs = self.request_kwargs(stream_state=stream_state, stream_slice=stream_slice, next_page_token=next_page_token)
-        response = self._send_request(request, request_kwargs)
+        response = await self._send_request(request, request_kwargs)
         return request, response
 
 
