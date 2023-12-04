@@ -408,7 +408,11 @@ class HttpStream(Stream, ABC):
             limit_per_host=MAX_CONNECTION_POOL_SIZE,  # Max connections per host
             limit=MAX_CONNECTION_POOL_SIZE,           # Max total connections
         )
-        session = aiohttp.ClientSession(connector=connector)
+        assert not self._session.auth  # TODO
+        kwargs = {}
+        if self._authenticator:
+            kwargs['headers'] = self._authenticator.get_auth_header()
+        session = aiohttp.ClientSession(connector=connector, **kwargs)
         return session
 
     def _send_request(self, request: aiohttp.ClientRequest, request_kwargs: Mapping[str, Any]) -> aiohttp.ClientResponse:
