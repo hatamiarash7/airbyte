@@ -3,6 +3,7 @@
 #
 
 import asyncio
+import json
 import logging
 import os
 import urllib
@@ -10,7 +11,9 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Callable, Iterable, List, Mapping, MutableMapping, Optional, Tuple, Union
 from urllib.parse import urljoin
+from yarl import URL
 
+import aiohttp
 import requests
 import requests_cache
 from airbyte_cdk.models import SyncMode
@@ -251,7 +254,7 @@ class HttpStream(Stream, ABC):
         """
 
     # TODO move all the retry logic to a functor/decorator which is input as an init parameter
-    def should_retry(self, response: requests.Response) -> bool:
+    def should_retry(self, response: aiohttp.ClientResponse) -> bool:
         """
         Override to set different conditions for backoff based on the response from the server.
 
@@ -261,9 +264,9 @@ class HttpStream(Stream, ABC):
 
         Unexpected but transient exceptions (connection timeout, DNS resolution failed, etc..) are retried by default.
         """
-        return response.status_code == 429 or 500 <= response.status_code < 600
+        return response.status == 429 or 500 <= response.status < 600
 
-    def backoff_time(self, response: requests.Response) -> Optional[float]:
+    def backoff_time(self, response: aiohttp.ClientResponse) -> Optional[float]:
         """
         Override this method to dynamically determine backoff time e.g: by reading the X-Retry-After header.
 
@@ -275,7 +278,7 @@ class HttpStream(Stream, ABC):
         """
         return None
 
-    def error_message(self, response: requests.Response) -> str:
+    def error_message(self, response: aiohttp.ClientResponse) -> str:
         """
         Override this method to specify a custom error message which can incorporate the HTTP response received
 
@@ -309,31 +312,40 @@ class HttpStream(Stream, ABC):
         params: Optional[Mapping[str, str]] = None,
         json: Optional[Mapping[str, Any]] = None,
         data: Optional[Union[str, Mapping[str, Any]]] = None,
-    ) -> requests.PreparedRequest:
-        url = self._join_url(self.url_base, path)
+    ) -> aiohttp.ClientRequest:
+        return asyncio.run(self._create_aiohttp_client_requests(path, headers, params, json, data))
+
+    async def _create_aiohttp_client_requests(
+        self,
+        path: str,
+        headers: Optional[Mapping[str, str]] = None,
+        params: Optional[Mapping[str, str]] = None,
+        json_data: Optional[Mapping[str, Any]] = None,
+        data: Optional[Union[str, Mapping[str, Any]]] = None,
+    ) -> aiohttp.ClientRequest:
+        str_url = self._join_url(self.url_base, path)
+        url = URL(str_url)
         if self.must_deduplicate_query_params():
-            query_params = self.deduplicate_query_params(url, params)
+            query_params = self.deduplicate_query_params(str_url, params)
         else:
             query_params = params or {}
-        args = {"method": self.http_method, "url": url, "headers": headers, "params": query_params}
         if self.http_method.upper() in BODY_REQUEST_METHODS:
-            if json and data:
+            if json_data and data:
                 raise RequestBodyException(
                     "At the same time only one of the 'request_body_data' and 'request_body_json' functions can return data"
                 )
-            elif json:
-                args["json"] = json
-            elif data:
-                args["data"] = data
-        prepared_request: requests.PreparedRequest = self._session.prepare_request(requests.Request(**args))
 
-        return prepared_request
+        client_request = aiohttp.ClientRequest(
+            self.http_method, url, headers=headers, params=query_params, data=json.dumps(json_data) if json_data else data
+        )  # TODO: add json header if json_data?
+
+        return client_request
 
     @classmethod
     def _join_url(cls, url_base: str, path: str) -> str:
         return urljoin(url_base, path)
 
-    def _send(self, request: requests.PreparedRequest, request_kwargs: Mapping[str, Any]) -> requests.Response:
+    def _send(self, request: aiohttp.ClientRequest, request_kwargs: Mapping[str, Any]) -> aiohttp.ClientResponse:
         """
         Wraps sending the request in rate limit and error handlers.
         Please note that error handling for HTTP status codes will be ignored if raise_on_http_errors is set to False
@@ -362,17 +374,17 @@ class HttpStream(Stream, ABC):
         # Do it only in debug mode
         if self.logger.isEnabledFor(logging.DEBUG):
             self.logger.debug(
-                "Receiving response", extra={"headers": response.headers, "status": response.status_code, "body": response.text}
+                "Receiving response", extra={"headers": response.headers, "status": response.status, "body": response.text}
             )
         if self.should_retry(response):
             custom_backoff_time = self.backoff_time(response)
             error_message = self.error_message(response)
             if custom_backoff_time:
                 raise UserDefinedBackoffException(
-                    backoff=custom_backoff_time, request=request, response=response, error_message=error_message
+                    backoff=custom_backoff_time, response=response, error_message=error_message
                 )
             else:
-                raise DefaultBackoffException(request=request, response=response, error_message=error_message)
+                raise DefaultBackoffException(response=response, error_message=error_message)
         elif self.raise_on_http_errors:
             # Raise any HTTP exceptions that happened in case there were unexpected ones
             try:
@@ -382,10 +394,22 @@ class HttpStream(Stream, ABC):
                 raise exc
         return response
 
-    async def _do_request(self, request, **request_kwargs) -> requests.Response:
-        return self._session.send(request, **request_kwargs)
+    async def _do_request(self, request, **request_kwargs) -> aiohttp.ClientResponse:
+        session = await self._setup_session()
+        # TODO: get headers and anything else off of request & combine with request_kwargs?
+        async with session.request(request.method, request.url, **request_kwargs) as resp:
+            return resp
 
-    def _send_request(self, request: requests.PreparedRequest, request_kwargs: Mapping[str, Any]) -> requests.Response:
+    async def _setup_session(self) -> aiohttp.ClientSession:
+        # TODO: figure out authentication
+        connector = aiohttp.TCPConnector(
+            limit_per_host=MAX_CONNECTION_POOL_SIZE,  # Max connections per host
+            limit=MAX_CONNECTION_POOL_SIZE,           # Max total connections
+        )
+        session = aiohttp.ClientSession(connector=connector)
+        return session
+
+    def _send_request(self, request: aiohttp.ClientRequest, request_kwargs: Mapping[str, Any]) -> aiohttp.ClientResponse:
         """
         Creates backoff wrappers which are responsible for retry logic
         """
