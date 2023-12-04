@@ -398,7 +398,9 @@ class HttpStream(Stream, ABC):
         session = await self._setup_session()
         # TODO: get headers and anything else off of request & combine with request_kwargs?
         async with session.request(request.method, request.url, **request_kwargs) as resp:
-            return resp
+            response = resp
+        await session.close()
+        return response
 
     async def _setup_session(self) -> aiohttp.ClientSession:
         # TODO: figure out authentication
