@@ -356,10 +356,7 @@ class HttpStream(Stream, ABC):
             "Making outbound API request", extra={"headers": request.headers, "url": request.url, "request_body": request.body}
         )
 
-        import ipdb; ipdb.set_trace()
-        loop = asyncio.get_event_loop()
-        future = loop.run_in_executor(loop, lambda: self._session.send(request, **request_kwargs))
-        response = future.result
+        response = asyncio.run(self._do_request(request, **request_kwargs))
 
         # Evaluation of response.text can be heavy, for example, if streaming a large response
         # Do it only in debug mode
@@ -384,6 +381,9 @@ class HttpStream(Stream, ABC):
                 self.logger.error(response.text)
                 raise exc
         return response
+
+    async def _do_request(self, request, **request_kwargs) -> requests.Response:
+        return self._session.send(request, **request_kwargs)
 
     def _send_request(self, request: requests.PreparedRequest, request_kwargs: Mapping[str, Any]) -> requests.Response:
         """
