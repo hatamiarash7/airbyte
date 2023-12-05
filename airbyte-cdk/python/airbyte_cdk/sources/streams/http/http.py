@@ -345,7 +345,7 @@ class HttpStream(Stream, ABC):
     def _join_url(cls, url_base: str, path: str) -> str:
         return urljoin(url_base, path)
 
-    def _send(self, request: aiohttp.ClientRequest, request_kwargs: Mapping[str, Any]) -> aiohttp.ClientResponse:
+    async def _send(self, request: aiohttp.ClientRequest, request_kwargs: Mapping[str, Any]) -> aiohttp.ClientResponse:
         """
         Wraps sending the request in rate limit and error handlers.
         Please note that error handling for HTTP status codes will be ignored if raise_on_http_errors is set to False
@@ -368,7 +368,7 @@ class HttpStream(Stream, ABC):
             "Making outbound API request", extra={"headers": request.headers, "url": request.url, "request_body": request.body}
         )
 
-        response = asyncio.run(self._do_request(request, **request_kwargs))
+        response = await self._do_request(request, **request_kwargs)
 
         # Evaluation of response.text can be heavy, for example, if streaming a large response
         # Do it only in debug mode
@@ -395,14 +395,14 @@ class HttpStream(Stream, ABC):
         return response
 
     async def _do_request(self, request, **request_kwargs) -> aiohttp.ClientResponse:
-        session = await self._setup_session()
+        session = await self._create_session()
         # TODO: get headers and anything else off of request & combine with request_kwargs?
         async with session.request(request.method, request.url, **request_kwargs) as resp:
             response = resp
-        await session.close()  # TODO: move this into context manager
+        # await session.close()  # TODO: move this into context manager
         return response
 
-    async def _setup_session(self) -> aiohttp.ClientSession:
+    async def _create_session(self) -> aiohttp.ClientSession:
         # TODO: figure out authentication
         connector = aiohttp.TCPConnector(
             limit_per_host=MAX_CONNECTION_POOL_SIZE,  # Max connections per host
@@ -415,7 +415,7 @@ class HttpStream(Stream, ABC):
         session = aiohttp.ClientSession(connector=connector, **kwargs)
         return session
 
-    def _send_request(self, request: aiohttp.ClientRequest, request_kwargs: Mapping[str, Any]) -> aiohttp.ClientResponse:
+    async def _send_request(self, request: aiohttp.ClientRequest, request_kwargs: Mapping[str, Any]) -> aiohttp.ClientResponse:
         """
         Creates backoff wrappers which are responsible for retry logic
         """
@@ -453,7 +453,8 @@ class HttpStream(Stream, ABC):
 
         user_backoff_handler = user_defined_backoff_handler(max_tries=max_tries, max_time=max_time)(self._send)
         backoff_handler = default_backoff_handler(max_tries=max_tries, max_time=max_time, factor=self.retry_factor)
-        return backoff_handler(user_backoff_handler)(request, request_kwargs)
+
+        return await backoff_handler(user_backoff_handler)(request, request_kwargs)
 
     @classmethod
     def parse_response_error_message(cls, response: requests.Response) -> Optional[str]:
@@ -529,14 +530,14 @@ class HttpStream(Stream, ABC):
         pagination_complete = False
         next_page_token = None
         while not pagination_complete:
-            request, response = self._fetch_next_page(stream_slice, stream_state, next_page_token)
+            request, response = asyncio.run(self._fetch_next_page(stream_slice, stream_state, next_page_token))
             yield from records_generator_fn(request, response, stream_state, stream_slice)
 
             next_page_token = self.next_page_token(response)
             if not next_page_token:
                 pagination_complete = True
 
-    def _fetch_next_page(
+    async def _fetch_next_page(
         self,
         stream_slice: Optional[Mapping[str, Any]] = None,
         stream_state: Optional[Mapping[str, Any]] = None,
@@ -552,7 +553,7 @@ class HttpStream(Stream, ABC):
         )
         request_kwargs = self.request_kwargs(stream_state=stream_state, stream_slice=stream_slice, next_page_token=next_page_token)
 
-        response = self._send_request(request, request_kwargs)
+        response = await self._send_request(request, request_kwargs)
         return request, response
 
 

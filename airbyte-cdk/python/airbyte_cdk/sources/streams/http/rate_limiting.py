@@ -5,7 +5,7 @@
 import logging
 import sys
 import time
-from typing import Any, Callable, Mapping, Optional
+from typing import Any, Callable, Coroutine, Mapping, Optional
 
 import aiohttp
 import backoff
@@ -28,7 +28,7 @@ TRANSIENT_EXCEPTIONS = (
 logger = logging.getLogger("airbyte")
 
 
-SendRequestCallableType = Callable[[aiohttp.ClientRequest, Mapping[str, Any]], aiohttp.ClientResponse]
+SendRequestCallableType = Callable[[aiohttp.ClientRequest, Mapping[str, Any]], Coroutine[Any, Any, aiohttp.ClientResponse]]
 TOO_MANY_REQUESTS_CODE = 429
 
 def default_backoff_handler(
