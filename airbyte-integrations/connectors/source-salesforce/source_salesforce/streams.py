@@ -213,14 +213,19 @@ class RestSalesforceStream(SalesforceStream):
                 break
 
             property_chunk = property_chunks[chunk_id]
-            request, response = asyncio.run(self._fetch_next_page_for_chunk(
-                stream_slice, stream_state, property_chunk.next_page, property_chunk.properties
-            ))
+
+            async def f():
+                request, response = await self._fetch_next_page_for_chunk(
+                    stream_slice, stream_state, property_chunk.next_page, property_chunk.properties
+                )
+                next_page = await self.next_page_token(response)
+                return request, response, next_page
+
+            request, response, property_chunk.next_page = asyncio.run(f())
 
             # When this is the first time we're getting a chunk's records, we set this to False to be used when deciding the next chunk
             if property_chunk.first_time:
                 property_chunk.first_time = False
-            property_chunk.next_page = asyncio.run(self.next_page_token(response))
             chunk_page_records = records_generator_fn(request, response, stream_state, stream_slice)
             if not self.too_many_properties:
                 # this is the case when a stream has no primary key

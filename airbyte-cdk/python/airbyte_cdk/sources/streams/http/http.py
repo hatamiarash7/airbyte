@@ -146,7 +146,7 @@ class HttpStream(Stream, ABC):
         return HttpAvailabilityStrategy()
 
     @abstractmethod
-    def next_page_token(self, response: aiohttp.ClientResponse) -> Optional[Mapping[str, Any]]:
+    async def next_page_token(self, response: aiohttp.ClientResponse) -> Optional[Mapping[str, Any]]:
         """
         Override this method to define a pagination strategy.
 
@@ -530,10 +530,16 @@ class HttpStream(Stream, ABC):
         pagination_complete = False
         next_page_token = None
         while not pagination_complete:
-            request, response = asyncio.run(self._fetch_next_page(stream_slice, stream_state, next_page_token))
+            async def f():
+                nonlocal next_page_token
+                request, response = await self._fetch_next_page(stream_slice, stream_state, next_page_token)
+                next_page_token = await self.next_page_token(response)
+                return request, response, next_page_token
+
+            request, response, next_page_token = asyncio.run(f())
+
             yield from records_generator_fn(request, response, stream_state, stream_slice)
 
-            next_page_token = self.next_page_token(response)
             if not next_page_token:
                 pagination_complete = True
 
