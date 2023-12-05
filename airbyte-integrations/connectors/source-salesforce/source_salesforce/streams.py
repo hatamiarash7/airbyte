@@ -128,7 +128,6 @@ class RestSalesforceStream(SalesforceStream):
         return f"/services/data/{self.sf_api.version}/queryAll"
 
     async def next_page_token(self, response: aiohttp.ClientResponse) -> Optional[Mapping[str, Any]]:
-        import ipdb; ipdb.set_trace()
         response_data = await response.json()
         next_token = response_data.get("nextRecordsUrl")
         return {"next_token": next_token} if next_token else None
