@@ -564,8 +564,8 @@ class HttpStream(Stream, ABC):
 
                 if not next_page_token:
                     pagination_complete = True
-                    self.queue_iterator.stop()
         finally:
+            self.queue_iterator.stop()
             await self._session.close()
 
     async def _fetch_next_page(

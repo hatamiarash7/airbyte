@@ -206,6 +206,7 @@ class RestSalesforceStream(SalesforceStream):
         try:
             await self._do_read_pages(records_generator_fn, stream_slice, stream_state)
         finally:
+            self.queue_iterator.stop()
             await self._session.close()
 
     async def _do_read_pages(
