@@ -462,10 +462,13 @@ class HttpStream(Stream, ABC):
         if max_tries is not None:
             max_tries = max(0, max_tries) + 1
         assert not self._session.closed
-        user_backoff_handler = user_defined_backoff_handler(max_tries=max_tries, max_time=max_time)(self._send)
-        backoff_handler = default_backoff_handler(max_tries=max_tries, max_time=max_time, factor=self.retry_factor)
 
-        return await backoff_handler(user_backoff_handler)(request, request_kwargs)
+        # @default_backoff_handler(max_tries=max_tries, max_time=max_time, factor=self.retry_factor)
+        # @user_defined_backoff_handler(max_tries=max_tries, max_time=max_time)
+        async def send():
+            return await self._send(request, request_kwargs)
+
+        return await send()
 
     @classmethod
     def parse_response_error_message(cls, response: requests.Response) -> Optional[str]:
