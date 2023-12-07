@@ -463,8 +463,8 @@ class HttpStream(Stream, ABC):
             max_tries = max(0, max_tries) + 1
         assert not self._session.closed
 
-        # @default_backoff_handler(max_tries=max_tries, max_time=max_time, factor=self.retry_factor)
-        # @user_defined_backoff_handler(max_tries=max_tries, max_time=max_time)
+        @default_backoff_handler(max_tries=max_tries, max_time=max_time, factor=self.retry_factor)
+        @user_defined_backoff_handler(max_tries=max_tries, max_time=max_time)
         async def send():
             return await self._send(request, request_kwargs)
 
