@@ -82,8 +82,8 @@ class SalesforceStream(HttpStream, ABC):
         properties_length = len(urllib.parse.quote(",".join(p for p in selected_properties)))
         return properties_length > self.max_properties_length
 
-    def parse_response(self, response: requests.Response, **kwargs) -> Iterable[Mapping]:
-        yield from response.json()["records"]
+    async def parse_response(self, response: aiohttp.ClientResponse, **kwargs) -> List[Mapping]:
+        return (await response.json())["records"]
 
     def get_json_schema(self) -> Mapping[str, Any]:
         if not self.schema:
@@ -193,14 +193,28 @@ class RestSalesforceStream(SalesforceStream):
             return None
         return min(non_exhausted_chunks, key=non_exhausted_chunks.get)
 
-    def _read_pages(
+    async def _read_pages(
         self,
         records_generator_fn: Callable[
-            [requests.PreparedRequest, requests.Response, Mapping[str, Any], Mapping[str, Any]], Iterable[StreamData]
+            [aiohttp.ClientRequest, aiohttp.ClientResponse, Mapping[str, Any], Mapping[str, Any]], Iterable[StreamData]
         ],
         stream_slice: Mapping[str, Any] = None,
         stream_state: Mapping[str, Any] = None,
-    ) -> Iterable[StreamData]:
+    ) -> None:
+        self._session = await self._create_session()
+        try:
+            await self._do_read_pages(records_generator_fn, stream_slice, stream_state)
+        finally:
+            await self._session.close()
+
+    async def _do_read_pages(
+            self,
+            records_generator_fn: Callable[
+                [aiohttp.ClientRequest, aiohttp.ClientResponse, Mapping[str, Any], Mapping[str, Any]], Iterable[StreamData]
+            ],
+            stream_slice: Mapping[str, Any] = None,
+            stream_state: Mapping[str, Any] = None,
+    ):
         stream_state = stream_state or {}
         records_by_primary_key = {}
         property_chunks: Mapping[int, PropertyChunk] = {
@@ -221,19 +235,19 @@ class RestSalesforceStream(SalesforceStream):
                 next_page = await self.next_page_token(response)
                 return request, response, next_page
 
-            request, response, property_chunk.next_page = asyncio.run(f())
+            request, response, property_chunk.next_page = await f()
 
             # When this is the first time we're getting a chunk's records, we set this to False to be used when deciding the next chunk
             if property_chunk.first_time:
                 property_chunk.first_time = False
-            chunk_page_records = records_generator_fn(request, response, stream_state, stream_slice)
+            chunk_page_records = await records_generator_fn(request, response, stream_state, stream_slice)
             if not self.too_many_properties:
                 # this is the case when a stream has no primary key
                 # (it is allowed when properties length does not exceed the maximum value)
                 # so there would be a single chunk, therefore we may and should yield records immediately
                 for record in chunk_page_records:
                     property_chunk.record_counter += 1
-                    yield record
+                    self.queue_iterator.queue.put(record)
                 continue
 
             # stick together different parts of records by their primary key and emit if a record is complete
@@ -247,7 +261,7 @@ class RestSalesforceStream(SalesforceStream):
                 partial_record.update(record)
                 counter += 1
                 if counter == len(property_chunks):
-                    yield partial_record  # now it's complete
+                    self.queue_iterator.queue.put(partial_record)  # now it's complete
                     records_by_primary_key.pop(record_id)
                 else:
                     records_by_primary_key[record_id] = (partial_record, counter)
@@ -263,9 +277,6 @@ class RestSalesforceStream(SalesforceStream):
         incomplete_record_ids = ",".join([str(key) for key in records_by_primary_key])
         if incomplete_record_ids:
             self.logger.warning(f"Inconsistent record(s) with primary keys {incomplete_record_ids} found. Skipping them.")
-
-        # Always return an empty generator just in case no records were ever yielded
-        yield from []
 
     async def _fetch_next_page_for_chunk(
         self,

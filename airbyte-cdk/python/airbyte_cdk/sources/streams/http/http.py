@@ -9,7 +9,9 @@ import os
 import urllib
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Callable, Iterable, List, Mapping, MutableMapping, Optional, Tuple, Union
+from queue import Queue
+from threading import Thread
+from typing import Any, Callable, Iterable, Iterator, List, Mapping, MutableMapping, Optional, Tuple, TypeVar, Union
 from urllib.parse import urljoin
 from yarl import URL
 
@@ -32,6 +34,21 @@ from .rate_limiting import default_backoff_handler, user_defined_backoff_handler
 
 # list of all possible HTTP methods which can be used for sending of request bodies
 BODY_REQUEST_METHODS = ("GET", "POST", "PUT", "PATCH")
+T = TypeVar("T")
+
+
+class QueueIterator(Iterator[T]):
+    def __init__(self, queue: Queue):
+        self.queue = queue
+        self.n_items = 0
+
+    def __next__(self) -> T:
+        item = self.queue.get()
+        if self.n_items > 10:
+            raise StopIteration
+        else:
+            self.n_items += 1  # TODO
+            return item
 
 
 class HttpStream(Stream, ABC):
@@ -44,16 +61,11 @@ class HttpStream(Stream, ABC):
 
     # TODO: remove legacy HttpAuthenticator authenticator references
     def __init__(self, authenticator: Optional[Union[AuthBase, HttpAuthenticator]] = None, api_budget: Optional[APIBudget] = None):
+        self.queue_iterator = QueueIterator(Queue())
         self._api_budget: APIBudget = api_budget or APIBudget(policies=[])
-        self._session = self.request_session()
-        self._session.mount(
-            "https://", requests.adapters.HTTPAdapter(pool_connections=MAX_CONNECTION_POOL_SIZE, pool_maxsize=MAX_CONNECTION_POOL_SIZE)
-        )
-        self._authenticator: HttpAuthenticator = NoAuth()
-        if isinstance(authenticator, AuthBase):
-            self._session.auth = authenticator
-        elif authenticator:
-            self._authenticator = authenticator
+        self._session = None
+        assert authenticator
+        self._authenticator = authenticator  # TODO: handle the preexisting code paths
 
     @property
     def cache_filename(self) -> str:
@@ -235,14 +247,14 @@ class HttpStream(Stream, ABC):
         return {}
 
     @abstractmethod
-    def parse_response(
+    async def parse_response(
         self,
         response: requests.Response,
         *,
         stream_state: Mapping[str, Any],
         stream_slice: Optional[Mapping[str, Any]] = None,
         next_page_token: Optional[Mapping[str, Any]] = None,
-    ) -> Iterable[Mapping[str, Any]]:
+    ) -> List[Mapping[str, Any]]:
         """
         Parses the raw response object into a list of records.
         By default, this returns an iterable containing the input. Override to parse differently.
@@ -368,7 +380,8 @@ class HttpStream(Stream, ABC):
             "Making outbound API request", extra={"headers": request.headers, "url": request.url, "request_body": request.body}
         )
 
-        response = await self._do_request(request, **request_kwargs)
+        # TODO: get headers and anything else off of request & combine with request_kwargs?
+        response = await self._session.request(request.method, request.url, **request_kwargs)
 
         # Evaluation of response.text can be heavy, for example, if streaming a large response
         # Do it only in debug mode
@@ -394,26 +407,21 @@ class HttpStream(Stream, ABC):
                 raise exc
         return response
 
-    async def _do_request(self, request, **request_kwargs) -> aiohttp.ClientResponse:
-        session = await self._create_session()
-        # TODO: get headers and anything else off of request & combine with request_kwargs?
-        async with session.request(request.method, request.url, **request_kwargs) as resp:
-            response = resp
-        # await session.close()  # TODO: move this into context manager
-        return response
-
     async def _create_session(self) -> aiohttp.ClientSession:
-        # TODO: figure out authentication
-        connector = aiohttp.TCPConnector(
-            limit_per_host=MAX_CONNECTION_POOL_SIZE,  # Max connections per host
-            limit=MAX_CONNECTION_POOL_SIZE,           # Max total connections
-        )
-        assert not self._session.auth  # TODO
-        kwargs = {}
-        if self._authenticator:
-            kwargs['headers'] = self._authenticator.get_auth_header()
-        session = aiohttp.ClientSession(connector=connector, **kwargs)
-        return session
+        if self._session is None:
+            # TODO: figure out authentication
+            connector = aiohttp.TCPConnector(
+                limit_per_host=MAX_CONNECTION_POOL_SIZE,  # Max connections per host
+                limit=MAX_CONNECTION_POOL_SIZE,           # Max total connections
+            )
+            kwargs = {}
+            assert self._authenticator.get_auth_header()
+            if self._authenticator:
+                kwargs['headers'] = self._authenticator.get_auth_header()
+            session = aiohttp.ClientSession(connector=connector, **kwargs)
+            return session
+        else:
+            return self._session
 
     async def _send_request(self, request: aiohttp.ClientRequest, request_kwargs: Mapping[str, Any]) -> aiohttp.ClientResponse:
         """
@@ -514,11 +522,16 @@ class HttpStream(Stream, ABC):
         stream_slice: Optional[Mapping[str, Any]] = None,
         stream_state: Optional[Mapping[str, Any]] = None,
     ) -> Iterable[StreamData]:
-        yield from self._read_pages(
-            lambda req, res, state, _slice: self.parse_response(res, stream_slice=_slice, stream_state=state), stream_slice, stream_state
-        )
+        Thread(
+            target=lambda: asyncio.run(
+                self._read_pages(
+                    lambda req, res, state, _slice: self.parse_response(res, stream_slice=_slice, stream_state=state), stream_slice, stream_state
+                )
+            )
+        ).start()
+        yield from self.queue_iterator
 
-    def _read_pages(
+    async def _read_pages(
         self,
         records_generator_fn: Callable[
             [aiohttp.ClientRequest, aiohttp.ClientResponse, Mapping[str, Any], Optional[Mapping[str, Any]]], Iterable[StreamData]
@@ -526,22 +539,28 @@ class HttpStream(Stream, ABC):
         stream_slice: Optional[Mapping[str, Any]] = None,
         stream_state: Optional[Mapping[str, Any]] = None,
     ) -> Iterable[StreamData]:
-        stream_state = stream_state or {}
-        pagination_complete = False
-        next_page_token = None
-        while not pagination_complete:
-            async def f():
-                nonlocal next_page_token
-                request, response = await self._fetch_next_page(stream_slice, stream_state, next_page_token)
-                next_page_token = await self.next_page_token(response)
-                return request, response, next_page_token
+        self._session = await self._create_session()
+        assert self._session
+        try:
+            stream_state = stream_state or {}
+            pagination_complete = False
+            next_page_token = None
+            while not pagination_complete:
+                async def f():
+                    nonlocal next_page_token
+                    request, response = await self._fetch_next_page(stream_slice, stream_state, next_page_token)
+                    next_page_token = await self.next_page_token(response)
+                    return request, response, next_page_token
 
-            request, response, next_page_token = asyncio.run(f())
+                request, response, next_page_token = await f()
 
-            yield from records_generator_fn(request, response, stream_state, stream_slice)
+                for record in await records_generator_fn(request, response, stream_state, stream_slice):
+                    self.queue_iterator.queue.put(record)
 
-            if not next_page_token:
-                pagination_complete = True
+                if not next_page_token:
+                    pagination_complete = True
+        finally:
+            await self._session.close()
 
     async def _fetch_next_page(
         self,
