@@ -528,13 +528,10 @@ class HttpStream(Stream, ABC):
         stream_slice: Optional[Mapping[str, Any]] = None,
         stream_state: Optional[Mapping[str, Any]] = None,
     ) -> Iterable[StreamData]:
-        Thread(
-            target=lambda: asyncio.run(
-                self._read_pages(
-                    lambda req, res, state, _slice: self.parse_response(res, stream_slice=_slice, stream_state=state), stream_slice, stream_state
-                )
-            )
-        ).start()
+        coro = self._read_pages(
+            lambda req, res, state, _slice: self.parse_response(res, stream_slice=_slice, stream_state=state), stream_slice, stream_state
+        )
+        Thread(target=lambda: asyncio.run(coro)).start()
         yield from self.queue_iterator
 
     async def _read_pages(
