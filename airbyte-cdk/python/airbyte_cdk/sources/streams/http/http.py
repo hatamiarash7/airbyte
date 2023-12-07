@@ -534,11 +534,7 @@ class HttpStream(Stream, ABC):
                 lambda req, res, state, _slice: self.parse_response(res, stream_slice=_slice, stream_state=state), stream_slice,
                 stream_state
             )
-
-            asyncio.set_event_loop(asyncio.new_event_loop())
-            loop = asyncio.get_event_loop()
-            loop.run_until_complete(coro)
-            # asyncio.run(coro)
+            asyncio.run(coro)
 
         thread = Thread(target=target)
         thread.start()
