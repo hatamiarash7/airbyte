@@ -207,8 +207,8 @@ class AirbyteEntrypoint(object):
 def launch(source: Source, args: List[str]) -> None:
     source_entrypoint = AirbyteEntrypoint(source)
     parsed_args = source_entrypoint.parse_args(args)
-    for message in source_entrypoint.run(parsed_args):
-        print(message)
+    for i, message in enumerate(source_entrypoint.run(parsed_args)):
+        print(i, str(message)[:50])
 
 
 def _init_internal_request_filter() -> None:
