@@ -201,7 +201,8 @@ class RestSalesforceStream(SalesforceStream):
         stream_slice: Mapping[str, Any] = None,
         stream_state: Mapping[str, Any] = None,
     ) -> None:
-        self._session = await self._create_session()
+        self._session = await self._ensure_session()
+        assert not self._session.closed
         try:
             await self._do_read_pages(records_generator_fn, stream_slice, stream_state)
         finally:
@@ -229,6 +230,7 @@ class RestSalesforceStream(SalesforceStream):
             property_chunk = property_chunks[chunk_id]
 
             async def f():
+                assert not self._session.closed
                 request, response = await self._fetch_next_page_for_chunk(
                     stream_slice, stream_state, property_chunk.next_page, property_chunk.properties
                 )
@@ -285,6 +287,7 @@ class RestSalesforceStream(SalesforceStream):
         next_page_token: Mapping[str, Any] = None,
         property_chunk: Mapping[str, Any] = None,
     ) -> Tuple[aiohttp.ClientRequest, aiohttp.ClientResponse]:
+        assert not self._session.closed
         request_headers = self.request_headers(stream_state=stream_state, stream_slice=stream_slice, next_page_token=next_page_token)
         request = self._create_prepared_request(
             path=self.path(stream_state=stream_state, stream_slice=stream_slice, next_page_token=next_page_token),

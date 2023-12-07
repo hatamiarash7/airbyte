@@ -41,14 +41,17 @@ class QueueIterator(Iterator[T]):
     def __init__(self, queue: Queue):
         self.queue = queue
         self.n_items = 0
+        self.sentinel = object()
 
     def __next__(self) -> T:
         item = self.queue.get()
-        if self.n_items > 10:
+        if item == self.sentinel:
             raise StopIteration
         else:
-            self.n_items += 1  # TODO
             return item
+
+    def stop(self):
+        self.queue.put(self.sentinel)
 
 
 class HttpStream(Stream, ABC):
@@ -63,7 +66,7 @@ class HttpStream(Stream, ABC):
     def __init__(self, authenticator: Optional[Union[AuthBase, HttpAuthenticator]] = None, api_budget: Optional[APIBudget] = None):
         self.queue_iterator = QueueIterator(Queue())
         self._api_budget: APIBudget = api_budget or APIBudget(policies=[])
-        self._session = None
+        self._session: aiohttp.ClientSession = None
         assert authenticator
         self._authenticator = authenticator  # TODO: handle the preexisting code paths
 
@@ -407,8 +410,8 @@ class HttpStream(Stream, ABC):
                 raise exc
         return response
 
-    async def _create_session(self) -> aiohttp.ClientSession:
-        if self._session is None:
+    async def _ensure_session(self) -> aiohttp.ClientSession:
+        if self._session is None or self._session.closed:  # TODO: why is the session closing?
             # TODO: figure out authentication
             connector = aiohttp.TCPConnector(
                 limit_per_host=MAX_CONNECTION_POOL_SIZE,  # Max connections per host
@@ -458,7 +461,7 @@ class HttpStream(Stream, ABC):
         """
         if max_tries is not None:
             max_tries = max(0, max_tries) + 1
-
+        assert not self._session.closed
         user_backoff_handler = user_defined_backoff_handler(max_tries=max_tries, max_time=max_time)(self._send)
         backoff_handler = default_backoff_handler(max_tries=max_tries, max_time=max_time, factor=self.retry_factor)
 
@@ -541,6 +544,7 @@ class HttpStream(Stream, ABC):
     ) -> Iterable[StreamData]:
         self._session = await self._create_session()
         assert self._session
+        assert not self._session.closed
         try:
             stream_state = stream_state or {}
             pagination_complete = False
@@ -548,6 +552,7 @@ class HttpStream(Stream, ABC):
             while not pagination_complete:
                 async def f():
                     nonlocal next_page_token
+                    assert not self._session.closed
                     request, response = await self._fetch_next_page(stream_slice, stream_state, next_page_token)
                     next_page_token = await self.next_page_token(response)
                     return request, response, next_page_token
@@ -559,6 +564,7 @@ class HttpStream(Stream, ABC):
 
                 if not next_page_token:
                     pagination_complete = True
+                    self.queue_iterator.stop()
         finally:
             await self._session.close()
 
@@ -578,6 +584,7 @@ class HttpStream(Stream, ABC):
         )
         request_kwargs = self.request_kwargs(stream_state=stream_state, stream_slice=stream_slice, next_page_token=next_page_token)
 
+        assert not self._session.closed
         response = await self._send_request(request, request_kwargs)
         return request, response
 
