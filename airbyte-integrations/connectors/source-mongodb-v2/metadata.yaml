@@ -5,12 +5,12 @@ data:
   connectorSubtype: database
   connectorType: source
   definitionId: b2e713cd-cc36-4c0a-b5bd-b47cb8a0561e
-  dockerImageTag: 1.0.10
-  dockerRepository: airbyte/source-mongodb-v2
-  documentationUrl: https://docs.airbyte.com/integrations/sources/mongodb-v2
+  dockerImageTag: 1.0.0
+  dockerRepository: hatamiarash7/airbyte-source-mongodb-v2-custom-ssl
+  documentationUrl: https://arash-hatami.ir
   githubIssueLabel: source-mongodb-v2
   icon: mongodb.svg
-  license: ELv2
+  license: MIT
   name: MongoDb
   registries:
     cloud:
@@ -21,10 +21,11 @@ data:
   supportLevel: certified
   tags:
     - language:java
+    - keyword:database
   releases:
     breakingChanges:
       1.0.0:
         message: >
-          **We advise against upgrading until you have run a test upgrade as outlined [here](https://docs.airbyte.com/integrations/sources/mongodb-v2-migrations).**  This version brings a host of updates to the MongoDB source connector, significantly increasing its scalability and reliability, especially for large collections. As of this version with checkpointing, [CDC incremental updates](https://docs.airbyte.com/understanding-airbyte/cdc) and improved schema discovery, this connector is also now [certified](https://docs.airbyte.com/integrations/). Selecting `Upgrade` will upgrade **all** connections using this source, require you to reconfigure the source, then run a full reset on **all** of your connections.
+          Support Custom SSL
         upgradeDeadline: "2023-12-01"
 metadataSpecVersion: "1.0"
