@@ -19,35 +19,48 @@ import com.fasterxml.jackson.databind.JsonNode;
 import java.util.OptionalInt;
 
 /**
- * Represents the source's configuration, hiding the details of how the underlying JSON
+ * Represents the source's configuration, hiding the details of how the
+ * underlying JSON
  * configuration is constructed.
  *
- * @param rawConfig The underlying JSON configuration provided by the connector framework.
+ * @param rawConfig The underlying JSON configuration provided by the connector
+ *                  framework.
  */
 public record MongoDbSourceConfig(JsonNode rawConfig) {
 
+  private static String CERTIFICATE_CONFIGURATION_KEY = "cert";
+  private static String PRIVATE_KEY_CONFIGURATION_KEY = "key";
+  private static String CERTIFICATE_PASS_CONFIGURATION_KEY = "cert_pass";
+
   /**
-   * Constructs a new {@link MongoDbSourceConfig} from the provided raw configuration.
+   * Constructs a new {@link MongoDbSourceConfig} from the provided raw
+   * configuration.
    *
-   * @param rawConfig The underlying JSON configuration provided by the connector framework.
-   * @throws IllegalArgumentException if the raw configuration does not contain the
-   *         {@link MongoConstants#DATABASE_CONFIG_CONFIGURATION_KEY} key.
+   * @param rawConfig The underlying JSON configuration provided by the connector
+   *                  framework.
+   * @throws IllegalArgumentException if the raw configuration does not contain
+   *                                  the
+   *                                  {@link MongoConstants#DATABASE_CONFIG_CONFIGURATION_KEY}
+   *                                  key.
    */
   public MongoDbSourceConfig(final JsonNode rawConfig) {
     if (rawConfig.has(DATABASE_CONFIG_CONFIGURATION_KEY)) {
       this.rawConfig = rawConfig.get(DATABASE_CONFIG_CONFIGURATION_KEY);
     } else {
-      throw new IllegalArgumentException("Database configuration is missing required '" + DATABASE_CONFIG_CONFIGURATION_KEY + "' property.");
+      throw new IllegalArgumentException(
+          "Database configuration is missing required '" + DATABASE_CONFIG_CONFIGURATION_KEY + "' property.");
     }
   }
 
   public String getAuthSource() {
-    return rawConfig.has(AUTH_SOURCE_CONFIGURATION_KEY) ? rawConfig.get(AUTH_SOURCE_CONFIGURATION_KEY).asText(DEFAULT_AUTH_SOURCE)
+    return rawConfig.has(AUTH_SOURCE_CONFIGURATION_KEY)
+        ? rawConfig.get(AUTH_SOURCE_CONFIGURATION_KEY).asText(DEFAULT_AUTH_SOURCE)
         : DEFAULT_AUTH_SOURCE;
   }
 
   public Integer getCheckpointInterval() {
-    return rawConfig.has(CHECKPOINT_INTERVAL_CONFIGURATION_KEY) ? rawConfig.get(CHECKPOINT_INTERVAL_CONFIGURATION_KEY).asInt(CHECKPOINT_INTERVAL)
+    return rawConfig.has(CHECKPOINT_INTERVAL_CONFIGURATION_KEY)
+        ? rawConfig.get(CHECKPOINT_INTERVAL_CONFIGURATION_KEY).asInt(CHECKPOINT_INTERVAL)
         : CHECKPOINT_INTERVAL;
   }
 
@@ -81,4 +94,17 @@ public record MongoDbSourceConfig(JsonNode rawConfig) {
     }
   }
 
+  public String getCertificate() {
+    return rawConfig.has(CERTIFICATE_CONFIGURATION_KEY) ? rawConfig.get(CERTIFICATE_CONFIGURATION_KEY).asText() : null;
+  }
+
+  public String getPrivateKey() {
+    return rawConfig.has(PRIVATE_KEY_CONFIGURATION_KEY) ? rawConfig.get(PRIVATE_KEY_CONFIGURATION_KEY).asText() : null;
+  }
+
+  public String getCertificatePass() {
+    return rawConfig.has(CERTIFICATE_PASS_CONFIGURATION_KEY)
+        ? rawConfig.get(CERTIFICATE_PASS_CONFIGURATION_KEY).asText()
+        : null;
+  }
 }
