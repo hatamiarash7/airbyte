@@ -12,6 +12,7 @@ out
 .vscode
 **/gmon.out
 static_checker_reports/
+bin
 
 # Logs
 acceptance_tests_logs/
