@@ -105,6 +105,6 @@ public record MongoDbSourceConfig(JsonNode rawConfig) {
   public String getCertificatePass() {
     return rawConfig.has(CERTIFICATE_PASS_CONFIGURATION_KEY)
         ? rawConfig.get(CERTIFICATE_PASS_CONFIGURATION_KEY).asText()
-        : null;
+        : "";
   }
 }
