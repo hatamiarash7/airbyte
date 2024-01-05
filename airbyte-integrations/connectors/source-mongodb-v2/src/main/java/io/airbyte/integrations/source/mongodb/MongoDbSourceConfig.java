@@ -31,6 +31,7 @@ public record MongoDbSourceConfig(JsonNode rawConfig) {
   private static String CERTIFICATE_CONFIGURATION_KEY = "cert";
   private static String PRIVATE_KEY_CONFIGURATION_KEY = "key";
   private static String CERTIFICATE_PASS_CONFIGURATION_KEY = "cert_pass";
+  private static String SSL_VALIDATION_CONFIGURATION_KEY = "validation";
 
   /**
    * Constructs a new {@link MongoDbSourceConfig} from the provided raw
@@ -106,5 +107,11 @@ public record MongoDbSourceConfig(JsonNode rawConfig) {
     return rawConfig.has(CERTIFICATE_PASS_CONFIGURATION_KEY)
         ? rawConfig.get(CERTIFICATE_PASS_CONFIGURATION_KEY).asText()
         : "";
+  }
+
+  public boolean getSSLValidation() {
+    return rawConfig.has(SSL_VALIDATION_CONFIGURATION_KEY)
+        ? rawConfig.get(SSL_VALIDATION_CONFIGURATION_KEY).asText().equals("yes")
+        : false;
   }
 }
