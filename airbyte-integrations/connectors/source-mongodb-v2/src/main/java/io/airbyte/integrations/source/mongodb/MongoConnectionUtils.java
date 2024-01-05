@@ -17,6 +17,11 @@ import io.airbyte.cdk.integrations.debezium.internals.mongodb.MongoDbDebeziumPro
 
 import java.io.ByteArrayInputStream;
 import java.net.URLEncoder;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
+import java.security.cert.CertificateException;
+import java.security.cert.X509Certificate;
 import java.nio.charset.StandardCharsets;
 import java.io.FileOutputStream;
 import java.security.Key;
@@ -60,16 +65,24 @@ public class MongoConnectionUtils {
     }
 
     try {
-      // We can't use the PEM certificate directly, so we need to convert it to JKS
-      // Airbyte is not support file upload, so we need to get the certificate from
-      // the config as string and convert it to JKS file.
-      convertToJKS(config.getCertificate(), config.getPrivateKey(), CERTIFICATE_PATH, config.getCertificatePass());
+      final boolean validation = config.getSSLValidation();
+      System.out.println("[Arash] Connecting to MongoDB with SSL validation: " + validation);
 
-      System.setProperty("javax.net.ssl.trustStore", CERTIFICATE_PATH);
-      System.setProperty("javax.net.ssl.trustStorePassword", config.getCertificatePass());
-      System.setProperty("javax.net.ssl.keyStore", CERTIFICATE_PATH);
-      System.setProperty("javax.net.ssl.keyStorePassword", config.getCertificatePass());
-      System.setProperty("javax.security.auth.useSubjectCredsOnly", "false");
+      // Check SSL validation flag. We can use it to enable insecure connection.
+      if (!validation) {
+        disableSSLValidation();
+      } else {
+        // We can't use the PEM certificate directly, so we need to convert it to JKS
+        // Airbyte is not support file upload, so we need to get the certificate from
+        // the config as string and convert it to JKS file.
+        convertToJKS(config.getCertificate(), config.getPrivateKey(), CERTIFICATE_PATH, config.getCertificatePass());
+
+        System.setProperty("javax.net.ssl.trustStore", CERTIFICATE_PATH);
+        System.setProperty("javax.net.ssl.trustStorePassword", config.getCertificatePass());
+        System.setProperty("javax.net.ssl.keyStore", CERTIFICATE_PATH);
+        System.setProperty("javax.net.ssl.keyStorePassword", config.getCertificatePass());
+        System.setProperty("javax.security.auth.useSubjectCredsOnly", "false");
+      }
 
       return MongoClients.create(mongoClientSettingsBuilder.build(), mongoDriverInformation);
     } catch (Exception e) {
@@ -108,4 +121,20 @@ public class MongoConnectionUtils {
     return MongoDbDebeziumPropertiesManager.buildConnectionString(config.rawConfig(), true);
   }
 
+  private static void disableSSLValidation() throws Exception {
+        SSLContext sslContext = SSLContext.getInstance("TLS");
+        sslContext.init(null, new TrustManager[]{new X509TrustManager() {
+            public void checkClientTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+            }
+
+            public void checkServerTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+            }
+
+            public X509Certificate[] getAcceptedIssuers() {
+                return new X509Certificate[0];
+            }
+        }}, null);
+
+        SSLContext.setDefault(sslContext);
+    }
 }
