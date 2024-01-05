@@ -84,7 +84,8 @@
               "connection_string",
               "database",
               "cert",
-              "key"
+              "key",
+              "cert_pass"
             ],
             "additionalProperties": true,
             "properties": {
